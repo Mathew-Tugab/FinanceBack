@@ -8,7 +8,8 @@ function getAccessTokenOptions() {
   const isProd = process.env.NODE_ENV === 'production';
   return {
     httpOnly: true,
-    sameSite: 'strict',
+    // 'none' required in production: frontend and backend are on different origins
+    sameSite: isProd ? 'none' : 'strict',
     secure: isProd,
     maxAge: Number(process.env.ACCESS_TOKEN_COOKIE_MS || 15 * 60 * 1000),
   };
@@ -18,7 +19,7 @@ function getRefreshTokenOptions() {
   const isProd = process.env.NODE_ENV === 'production';
   return {
     httpOnly: true,
-    sameSite: 'strict',
+    sameSite: isProd ? 'none' : 'strict',
     secure: isProd,
     maxAge: Number(process.env.REFRESH_TOKEN_COOKIE_MS || 7 * 24 * 60 * 60 * 1000),
   };

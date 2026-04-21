@@ -82,15 +82,16 @@ function setAuthCookies(res, accessToken, refreshToken) {
 }
 
 function clearAuthCookies(res) {
+  const isProd = process.env.NODE_ENV === 'production';
   res.clearCookie(ACCESS_TOKEN_COOKIE, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProd ? 'none' : 'strict',
+    secure: isProd,
   });
   res.clearCookie(REFRESH_TOKEN_COOKIE, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProd ? 'none' : 'strict',
+    secure: isProd,
   });
 }
 
