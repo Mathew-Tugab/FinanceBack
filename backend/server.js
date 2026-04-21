@@ -176,6 +176,7 @@ app.use((error, req, res, next) => { // eslint-disable-line no-unused-vars
     return res.status(403).json({ message: 'Invalid CSRF token' });
   }
 
+  // If this fires it is a genuine server bug — log it and return a safe message.
   console.error('Unhandled server error:', error);
   const status = error.status || error.statusCode || 500;
   return res.status(status).json({
