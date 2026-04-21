@@ -1,3 +1,4 @@
+require('express-async-errors'); // Must be first — patches Express to forward async errors to error handler
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -87,13 +88,18 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+console.log('Allowed CORS origins:', allowedOrigins);
+
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow requests with no origin (server-to-server, curl, Postman)
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      return callback(new Error('CORS origin is not allowed'));
+      // Reject but do NOT throw — throwing prevents CORS headers from being
+      // attached, making every error look like a CORS error to the browser.
+      return callback(null, false);
     },
     credentials: true,
   })
@@ -118,8 +124,16 @@ mongoose.connect(mongodbUri, {
   ensureDefaultAdminUser();
 })
 .catch((err) => {
-  console.error('MongoDB connection error:', err);
-  process.exit(1);
+  // Log the error but keep the server alive so Render doesn't return 502.
+  // CORS preflight and health-check requests will still succeed.
+  console.error('MongoDB connection error — server will continue running but DB operations will fail:', err);
+});
+
+// Keep the process alive if a stray unhandled rejection slips through
+// (e.g., a DB query fires before reconnection). Without this, Node 15+
+// exits with code 1 → Render returns 502.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (server kept alive):', reason);
 });
 
 // Apply general rate limiter to all API routes
@@ -146,16 +160,29 @@ app.get('/', (req, res) => {
   res.json({ message: 'ATSOCA Payment Tracking API' });
 });
 
-app.use((error, req, res, next) => {
+// Global error handler — must be last, after all routes.
+// Always returns JSON (never HTML) so the frontend can parse errors,
+// and always sets CORS headers so the browser can read the response.
+app.use((error, req, res, next) => { // eslint-disable-line no-unused-vars
+  // Re-apply CORS for the error response so the browser can read the body
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
+
   if (error.code === 'EBADCSRFTOKEN') {
     return res.status(403).json({ message: 'Invalid CSRF token' });
   }
 
-  if (error.message === 'CORS origin is not allowed') {
-    return res.status(403).json({ message: 'CORS denied for this origin' });
-  }
-
-  return next(error);
+  console.error('Unhandled server error:', error);
+  const status = error.status || error.statusCode || 500;
+  return res.status(status).json({
+    message: process.env.NODE_ENV === 'production'
+      ? 'An unexpected error occurred'
+      : (error.message || 'Internal server error'),
+  });
 });
 
 // Start Server
