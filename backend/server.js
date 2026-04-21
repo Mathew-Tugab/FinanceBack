@@ -6,6 +6,23 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const mongoSanitize = require('express-mongo-sanitize');
 require('dotenv').config();
+
+// ── Startup environment variable validation ───────────────────────────────────
+// Log clearly which required variables are missing so Render logs show the
+// exact problem instead of an opaque crash deeper in the code.
+const REQUIRED_ENV = [
+  'MONGODB_URI',
+  'JWT_ACCESS_SECRET',
+  'JWT_REFRESH_SECRET',
+];
+const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
+if (missingEnv.length > 0) {
+  console.error('FATAL: Missing required environment variables:', missingEnv.join(', '));
+  console.error('Set these in your Render environment dashboard and redeploy.');
+  process.exit(1);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const User = require('./models/User');
 const { generalApiLimiter } = require('./middleware/rateLimiters');
 
@@ -129,6 +146,12 @@ mongoose.connect(mongodbUri, {
   console.error('MongoDB connection error — server will continue running but DB operations will fail:', err);
 });
 
+// Mongoose connection lifecycle logging — helps diagnose cold-start DB issues
+// on Render free tier where the container sleeps and the Atlas connection drops.
+mongoose.connection.on('disconnected', () => console.warn('MongoDB disconnected — waiting to reconnect...'));
+mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected'));
+mongoose.connection.on('error', (err) => console.error('MongoDB runtime error:', err.message || err));
+
 // Keep the process alive if a stray unhandled rejection slips through
 // (e.g., a DB query fires before reconnection). Without this, Node 15+
 // exits with code 1 → Render returns 502.
@@ -138,6 +161,20 @@ process.on('unhandledRejection', (reason) => {
 
 // Apply general rate limiter to all API routes
 app.use('/api/', generalApiLimiter);
+
+// DB readiness guard — return 503 (not 500) when MongoDB is not yet connected.
+// This gives the frontend a clear "try again" signal instead of a crash.
+// Health check and root are intentionally excluded.
+app.use((req, res, next) => {
+  const { readyState } = mongoose.connection;
+  // 1 = connected, 2 = connecting (allow through — query will queue internally)
+  if (readyState === 0 || readyState === 3) {
+    return res.status(503).json({
+      message: 'Database is not connected. Please try again in a moment.',
+    });
+  }
+  return next();
+});
 
 // Routes
 const paymentRoutes = require('./routes/payments');
@@ -150,9 +187,15 @@ app.use('/api/protected', protectedRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/form-sync', formSyncRoutes);
 
-// Health check endpoint
+// Health check endpoint — reports DB state so you can diagnose cold starts
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server is running' });
+  const states = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  const dbState = states[mongoose.connection.readyState] || 'unknown';
+  const ok = mongoose.connection.readyState === 1;
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    db: dbState,
+  });
 });
 
 // Root endpoint
