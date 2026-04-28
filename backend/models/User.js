@@ -91,6 +91,11 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    isDisabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );

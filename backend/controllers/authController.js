@@ -26,6 +26,7 @@ function getPublicUser(user) {
     email: user.email,
     role: user.role,
     isApproved: user.isApproved,
+    isDisabled: user.isDisabled ?? false,
     createdAt: user.createdAt,
   };
 }
@@ -170,6 +171,10 @@ async function login(req, res) {
 
   if (!user) {
     return res.status(401).json({ message: 'Invalid credentials' });
+  }
+
+  if (user.isDisabled) {
+    return res.status(403).json({ message: 'Account has been disabled. Please contact an administrator.' });
   }
 
   if (user.isLocked) {
@@ -383,9 +388,15 @@ async function refresh(req, res) {
   }
 
   const user = await User.findById(payload.sub);
-  if (!user) {
+  if (!user || user.isDisabled) {
+    if (user?.isDisabled && payload.family) {
+      await RefreshToken.updateMany(
+        { user: payload.sub, family: payload.family, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      );
+    }
     clearAuthCookies(res);
-    return res.status(401).json({ message: 'User not found' });
+    return res.status(401).json({ message: user?.isDisabled ? 'Account has been disabled.' : 'User not found' });
   }
 
   existing.revokedAt = new Date();
@@ -507,7 +518,7 @@ async function approveUser(req, res) {
 
 async function listAccounts(req, res) {
   const users = await User.find({})
-    .select('_id username email role isApproved createdAt')
+    .select('_id username email role isApproved isDisabled createdAt')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -517,6 +528,7 @@ async function listAccounts(req, res) {
     email: user.email,
     role: user.role,
     isApproved: user.isApproved,
+    isDisabled: user.isDisabled ?? false,
     createdAt: user.createdAt,
   }));
 
@@ -525,9 +537,9 @@ async function listAccounts(req, res) {
 
 async function updateAccount(req, res) {
   const { id } = req.params;
-  const { role, isApproved } = req.body || {};
+  const { role, isApproved, isDisabled } = req.body || {};
 
-  if (typeof role === 'undefined' && typeof isApproved === 'undefined') {
+  if (typeof role === 'undefined' && typeof isApproved === 'undefined' && typeof isDisabled === 'undefined') {
     return res.status(400).json({ message: 'No account changes provided' });
   }
 
@@ -537,6 +549,10 @@ async function updateAccount(req, res) {
 
   if (typeof isApproved !== 'undefined' && typeof isApproved !== 'boolean') {
     return res.status(400).json({ message: 'Invalid approval status' });
+  }
+
+  if (typeof isDisabled !== 'undefined' && typeof isDisabled !== 'boolean') {
+    return res.status(400).json({ message: 'Invalid disabled status' });
   }
 
   const user = await User.findById(id);
@@ -554,15 +570,26 @@ async function updateAccount(req, res) {
 
   if (typeof isApproved !== 'undefined') {
     user.isApproved = isApproved;
+  }
 
+  if (typeof isDisabled !== 'undefined') {
+    user.isDisabled = isDisabled;
+    // When disabling, immediately revoke all active sessions for this user
+    if (isDisabled) {
+      await RefreshToken.updateMany(
+        { user: user._id, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      );
+    }
   }
 
   await user.save();
 
-  await createAuditLog(req.user.id, 'account.updated', user._id, {
+  await createAuditLog(req.user.id, isDisabled ? 'account.disabled' : (isDisabled === false ? 'account.enabled' : 'account.updated'), user._id, {
     changes: {
       ...(typeof role !== 'undefined' && { role }),
       ...(typeof isApproved !== 'undefined' && { isApproved }),
+      ...(typeof isDisabled !== 'undefined' && { isDisabled }),
     },
     username: user.username,
   }, req.ip);
