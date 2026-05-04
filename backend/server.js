@@ -28,6 +28,11 @@ const { generalApiLimiter } = require('./middleware/rateLimiters');
 
 const app = express();
 
+// Render (and most cloud platforms) sit behind a reverse proxy that sets
+// X-Forwarded-For. Without this, express-rate-limit cannot identify clients
+// correctly and throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+app.set('trust proxy', 1);
+
 async function removeLegacyReferenceNumberUniqueIndex() {
   try {
     const collection = mongoose.connection.collection('paymentrecords');
