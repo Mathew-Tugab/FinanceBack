@@ -398,6 +398,87 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET public aggregate stats — no auth required, no PII exposed
+router.get('/public-stats', async (req, res) => {
+  try {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth(); // 0-indexed
+
+    // Current month boundaries
+    const currentMonthStart = new Date(Date.UTC(year, month, 1));
+    const currentMonthEnd = new Date(Date.UTC(year, month + 1, 1));
+
+    // Previous month boundaries
+    const prevMonthStart = new Date(Date.UTC(year, month - 1, 1));
+    const prevMonthEnd = new Date(Date.UTC(year, month, 1));
+
+    // Current quarter boundaries (Q1=0,Q2=1,Q3=2,Q4=3)
+    const currentQuarter = Math.floor(month / 3);
+    const currentQuarterStart = new Date(Date.UTC(year, currentQuarter * 3, 1));
+    const currentQuarterEnd = new Date(Date.UTC(year, (currentQuarter + 1) * 3, 1));
+
+    // Previous quarter boundaries (handles year rollover)
+    const prevQuarter = currentQuarter - 1;
+    const prevQuarterYear = prevQuarter < 0 ? year - 1 : year;
+    const prevQuarterIndex = prevQuarter < 0 ? 3 : prevQuarter;
+    const prevQuarterStart = new Date(Date.UTC(prevQuarterYear, prevQuarterIndex * 3, 1));
+    const prevQuarterEnd = new Date(Date.UTC(prevQuarterYear, (prevQuarterIndex + 1) * 3, 1));
+
+    const [result] = await PaymentRecord.aggregate([
+      { $match: { archived: { $ne: true } } },
+      {
+        $facet: {
+          totalRecords: [{ $count: 'count' }],
+          pendingCount: [
+            { $match: { paymentRecord: 'Pending' } },
+            { $count: 'count' },
+          ],
+          completedCount: [
+            { $match: { paymentRecord: 'Completed' } },
+            { $count: 'count' },
+          ],
+          currentMonthAmount: [
+            { $match: { createdAt: { $gte: currentMonthStart, $lt: currentMonthEnd } } },
+            { $group: { _id: null, total: { $sum: '$amountPaid' } } },
+          ],
+          previousMonthAmount: [
+            { $match: { createdAt: { $gte: prevMonthStart, $lt: prevMonthEnd } } },
+            { $group: { _id: null, total: { $sum: '$amountPaid' } } },
+          ],
+          currentQuarterAmount: [
+            { $match: { createdAt: { $gte: currentQuarterStart, $lt: currentQuarterEnd } } },
+            { $group: { _id: null, total: { $sum: '$amountPaid' } } },
+          ],
+          previousQuarterAmount: [
+            { $match: { createdAt: { $gte: prevQuarterStart, $lt: prevQuarterEnd } } },
+            { $group: { _id: null, total: { $sum: '$amountPaid' } } },
+          ],
+          latestPending: [
+            { $match: { paymentRecord: 'Pending' } },
+            { $sort: { updatedAt: -1 } },
+            { $limit: 1 },
+            { $project: { _id: 0, updatedAt: 1 } },
+          ],
+        },
+      },
+    ]);
+
+    res.json({
+      totalRecords: result.totalRecords[0]?.count ?? 0,
+      pendingCount: result.pendingCount[0]?.count ?? 0,
+      completedCount: result.completedCount[0]?.count ?? 0,
+      currentMonthAmountPaid: result.currentMonthAmount[0]?.total ?? 0,
+      previousMonthAmountPaid: result.previousMonthAmount[0]?.total ?? 0,
+      currentQuarterAmountPaid: result.currentQuarterAmount[0]?.total ?? 0,
+      previousQuarterAmountPaid: result.previousQuarterAmount[0]?.total ?? 0,
+      latestPendingUpdatedAt: result.latestPending[0]?.updatedAt ?? null,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // GET archived payment records
 router.get('/archived', async (req, res) => {
   try {
