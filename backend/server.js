@@ -234,4 +234,27 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
+
+  // ── Keep-alive ping (Render free tier) ──────────────────────────────────────
+  // Render spins down free services after 15 min of inactivity, causing a
+  // 30-60 s cold start on the next request. Pinging our own health endpoint
+  // every 14 min keeps the container warm without any external service.
+  // RENDER_EXTERNAL_URL is automatically set by Render in production.
+  const renderUrl = process.env.RENDER_EXTERNAL_URL;
+  if (renderUrl) {
+    const https = require('https');
+    const PING_INTERVAL_MS = 14 * 60 * 1000; // 14 minutes
+
+    setInterval(() => {
+      const target = `${renderUrl}/api/health`;
+      https.get(target, (res) => {
+        console.log(`Keep-alive ping → ${target} [${res.statusCode}]`);
+      }).on('error', (err) => {
+        console.warn('Keep-alive ping failed:', err.message);
+      });
+    }, PING_INTERVAL_MS);
+
+    console.log(`Keep-alive ping enabled → ${renderUrl}/api/health every 14 min`);
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 });
