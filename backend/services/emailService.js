@@ -3,6 +3,7 @@ const { Resend } = require('resend');
 
 const EMAIL_MODE_SMTP = 'smtp';
 const EMAIL_MODE_RESEND = 'resend';
+const EMAIL_MODE_BREVO = 'brevo';
 const EMAIL_MODE_CONSOLE = 'console';
 
 let mailTransporter = null;
@@ -23,14 +24,23 @@ function hasResendConfiguration() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+function hasBrevoConfiguration() {
+  return Boolean(process.env.BREVO_API_KEY && process.env.EMAIL_FROM);
+}
+
 function getEmailDeliveryMode() {
   const configuredMode = (process.env.EMAIL_DELIVERY_MODE || '').trim().toLowerCase();
   if (
     configuredMode === EMAIL_MODE_SMTP
     || configuredMode === EMAIL_MODE_RESEND
+    || configuredMode === EMAIL_MODE_BREVO
     || configuredMode === EMAIL_MODE_CONSOLE
   ) {
     return configuredMode;
+  }
+
+  if (hasBrevoConfiguration()) {
+    return EMAIL_MODE_BREVO;
   }
 
   if (hasResendConfiguration()) {
@@ -62,6 +72,11 @@ function logStartupMode(mode) {
 
   if (mode === EMAIL_MODE_RESEND) {
     console.log('Email delivery mode: Resend API');
+    return;
+  }
+
+  if (mode === EMAIL_MODE_BREVO) {
+    console.log('Email delivery mode: Brevo API');
     return;
   }
 
@@ -101,6 +116,38 @@ function getSmtpTransporter() {
   return mailTransporter;
 }
 
+async function sendWithBrevo({ to, subject, text, html }) {
+  if (!hasBrevoConfiguration()) {
+    throw new Error('Brevo email delivery mode requires BREVO_API_KEY and EMAIL_FROM.');
+  }
+
+  const body = JSON.stringify({
+    sender: { email: process.env.EMAIL_FROM },
+    to: [{ email: to }],
+    subject,
+    textContent: text,
+    htmlContent: html,
+  });
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Brevo API error ${res.status}: ${err}`);
+  }
+
+  const data = await res.json();
+  console.log('Email sent via Brevo:', data.messageId || 'ok');
+}
+
 async function sendEmail({ to, subject, text, html }) {
   const mode = getEmailDeliveryMode();
   logStartupMode(mode);
@@ -115,6 +162,10 @@ async function sendEmail({ to, subject, text, html }) {
     }
     console.log('----------------------------------');
     return;
+  }
+
+  if (mode === EMAIL_MODE_BREVO) {
+    return sendWithBrevo({ to, subject, text, html });
   }
 
   if (mode === EMAIL_MODE_RESEND) {
