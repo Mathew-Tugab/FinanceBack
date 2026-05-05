@@ -207,6 +207,40 @@ async function sendEmail({ to, subject, text, html }) {
 }
 
 async function sendEmailWithSmtp({ to, subject, text, html }) {
+  const mode = getEmailDeliveryMode();
+
+  if (mode === EMAIL_MODE_BREVO) {
+    return sendWithBrevo({ to, subject, text, html });
+  }
+
+  if (mode === EMAIL_MODE_RESEND) {
+    if (!hasResendConfiguration()) {
+      throw new Error('Resend email delivery mode requires RESEND_API_KEY and EMAIL_FROM.');
+    }
+    const client = getResendClient();
+    const { data, error } = await client.emails.send({
+      from: process.env.EMAIL_FROM,
+      to,
+      subject,
+      text,
+      html,
+    });
+    if (error) {
+      throw new Error(error.message || 'Failed to send email with Resend');
+    }
+    console.log('OTP email sent via Resend:', data?.id || 'resend-ok');
+    return;
+  }
+
+  if (mode === EMAIL_MODE_CONSOLE) {
+    console.log('--- OTP EMAIL OUTBOUND (SIMULATED) ---');
+    console.log('To:', to);
+    console.log('Subject:', subject);
+    console.log('Text:', text);
+    console.log('--------------------------------------');
+    return;
+  }
+
   if (!hasSmtpConfiguration()) {
     throw new Error('OTP delivery requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM.');
   }
