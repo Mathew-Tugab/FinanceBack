@@ -124,6 +124,10 @@ app.use(
       return callback(null, false);
     },
     credentials: true,
+    // Explicitly list every header the frontend sends so preflight requests
+    // are approved. Wildcards are ignored when credentials:true.
+    allowedHeaders: ['Content-Type', 'x-csrf-token'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   })
 );
 app.use(helmet());

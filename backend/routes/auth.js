@@ -41,7 +41,11 @@ router.post('/resend-verification-otp', csrfProtection, verifyEmailLimiter, rese
 router.post('/login', csrfProtection, authLoginLimiter, loginValidator, validateRequest, login);
 router.post('/forgot-password/request-otp', csrfProtection, authLoginLimiter, requestForgotPasswordOtpValidator, validateRequest, requestForgotPasswordOtp);
 router.post('/forgot-password/reset-with-otp', csrfProtection, authLoginLimiter, resetPasswordWithOtpValidator, validateRequest, resetPasswordWithOtp);
-router.post('/refresh', csrfProtection, refresh);
+// No csrfProtection here: the refresh token lives in an HttpOnly cookie so
+// JS cannot read it, making classic CSRF attacks ineffective. Keeping CSRF
+// off this endpoint also prevents mobile browsers from failing the refresh
+// after restoring a backgrounded tab (the in-memory CSRF token is gone).
+router.post('/refresh', refresh);
 router.post('/logout', csrfProtection, logout);
 router.get('/me', optionalAuthenticate, me);
 router.get('/pending-approvals', authenticate, authorizeRoles('admin'), pendingApprovals);

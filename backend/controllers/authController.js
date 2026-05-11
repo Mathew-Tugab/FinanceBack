@@ -376,7 +376,9 @@ async function refresh(req, res) {
   const refreshTokenHash = hashToken(refreshToken);
   const existing = await RefreshToken.findOne({ tokenHash: refreshTokenHash, user: payload.sub });
 
-  if (!existing || existing.revokedAt || existing.expiresAt <= new Date()) {
+  if (!existing) {
+    // Token not in DB — could be a replayed or already-deleted token.
+    // Revoke the entire family as a precaution against replay attacks.
     if (payload.family) {
       await RefreshToken.updateMany(
         { user: payload.sub, family: payload.family, revokedAt: null },
@@ -384,7 +386,24 @@ async function refresh(req, res) {
       );
     }
     clearAuthCookies(res);
-    return res.status(401).json({ message: 'Refresh token reuse detected or token expired' });
+    return res.status(401).json({ message: 'Refresh token not recognised' });
+  }
+
+  if (existing.revokedAt) {
+    // Previously revoked token reused — possible theft; revoke entire family.
+    if (payload.family) {
+      await RefreshToken.updateMany(
+        { user: payload.sub, family: payload.family, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      );
+    }
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'Refresh token reuse detected' });
+  }
+
+  if (existing.expiresAt <= new Date()) {
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'Refresh token expired' });
   }
 
   const user = await User.findById(payload.sub);
